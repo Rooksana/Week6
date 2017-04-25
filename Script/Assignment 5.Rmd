@@ -1,0 +1,314 @@
+---
+title: "Assingment5"
+author: "Rooksana Sultana"
+date: "April 19, 2017"
+output: html_document
+---
+
+
+```{r include=FALSE}
+getwd()
+setwd("C:/Users/rooksana/Desktop/Assignment5/data")
+bank<-read.csv("C:/Users/rooksana/Desktop/Assignment5/data/bank.csv")
+```
+# Structure of data
+```{r}
+str(bank)
+
+dim(bank)# 4521 observation 17 variables
+
+summary(bank)#From the 4521 data samples it shows, only (521)11.52% of the customers have subscribed to the term deposits. 
+```
+# What are we examining? Business Question
+
+The Bank dataset contains records of 4521 samples. It has the details such as age of the person,job, Marital status, Month, duration, default.category, pdays.number and Y..category - has the client subscribed a term deposit?. Using this, data set, modeling has been done to predict the outcome (y - has the client subscribed a term deposit?).This helps us to realize the probability of getting customer to subscribe the term deposit and to predict the possibility of selling term deposits to the new customer. We will examine three prediction models that are built on the basic decision trees(Ensemble Model):Bagging, Random forest and Boosting to improve the performance of a model.
+
+
+# Our Goal
+Our goal is to predict the subscription rate by creating models using training data set (Subset of database) and validating the model using Testing dataset (another subset), in order to increase the subscription rate. 
+
+# Metrics used to predict Model Performance
+1.Accuracy- which shows how accurate a model is in identifying both a customers who did subscribed to term deposit andwho didnot.
+2.Sensitivity- which shows how accurate(True Positive values) a model is in identifying customers who have subscribed to term deposit.
+3.Specificity- which shows how accurate(False Positive values) a model is in identifying customers who have not subscribed to term deposit.
+
+# Investigating the variables and their structure to decide which ones to include.
+Stepwise Regression using step() function to identify the importance of independent variables. 
+```{r}
+glm_bank <- glm(bank$y..category ~.,data = bank, family = "binomial")
+step.bank <- step(glm_bank)
+summary(step.bank)# Variables which are most significant in identifying customers who have subscribed to a term deposit are month..category mar, month..categoryoct and poutcome..category success(Outcome of previous marketing campaign). 
+step.bank$anova
+```
+After analzing the Regression model using stepwise regression, the results shows that the below variables are not significant in explaining the output.
+ 1. age..number
+ 2. default..category
+ 3. pdays..number
+ 4. previous..number
+ 5. balance..number
+ 6. job..category.
+ 
+# Conclusion: 
+However, we can reduce the independent variables, which are not significant in explain the output( Result of Stepwise regression)
+```{r}
+#Removing the variables which are not significant in explaing the output and making a new dataset.
+bank_new <- bank[,c(3,4,7,8,9,10,11,12,13,16,17)]
+```
+ 
+```{r include=FALSE}
+library(caret)
+library (party)
+library(mlbench)
+
+```
+# Splitting dataset into Traning and Test set using a 70:30 split.
+We divided the 4521 customer data base into 2 data set with 70% of the sample size for building the model and 30% of the sample size for testing and validation.
+```{r}
+set.seed(123)
+Bank_rand <- bank_new[order(runif(4521)), ] # here we are randomizing the observations
+Bank_rand <- sample(1:4521, 3165) 
+
+Bank_train <- bank_new[Bank_rand,]
+Bank_test  <- bank_new[-Bank_rand,]
+
+dim(Bank_train) #checking the split
+dim(Bank_test) #checking the split
+
+
+prop.table(table(Bank_train$y..category)) #??checking to see the class proportions between the training and test sets. 
+prop.table(table(Bank_test$y..category))
+
+```
+# Building Decision tree using rpart
+We are building a decision tree model using rpart and Gini index method to split.
+?? 1. Accuracy of the Model before pruning - 90.41%
+```{r include=FALSE}
+
+library(rpart)
+library(rpart.plot)
+library(partykit)
+library(party)
+```
+
+```{r}
+Bank.rpart<-rpart(Bank_train$y..category ~ ., method="class", parms=list(split="gini"), data=Bank_train)
+Bank.rpart
+
+rpart.plot(Bank.rpart, type=2, extra=101, cex = 0.5)
+#The decision tree starts by classifying people (3165) on basis of last contact duration (<5min), 92% of the people spoke for <5mins and 8% of the people spoke for more than 5 mins.these 8% were further classified based on marital status- married, 4%  of them subscribed to a term deposit and the remaining 4% who didnot subscribe for term deposit were classified based on month(apr,jan,june,may,nov), of these those who had a been contacted by marketing department, none of them subscribed to a term deposit.92% of the people who spoke <5mins were further classified based on outcome of previous market campaign(failure,other and unknown).
+
+Bank.party<-as.party(Bank.rpart)
+plot(Bank.party)
+
+# Let's return to applying the decision tree we estimated to our test set & then calculating the confusion matrix.
+
+actual <- Bank_test$y..category 
+Bank_predicted <- predict(Bank.rpart, newdata=Bank_test, type="class") 
+Bank_results.matrix <- confusionMatrix(Bank_predicted, actual, positive="yes") 
+print(Bank_results.matrix) 
+# Accuracy =  This model is 90.41% accurate in predicting Accuracy, which shows how accurate a model is in identifying customers who have and have not subscribed to term deposit.
+# Sensitivity = 43.06%
+# Specificity = 95.73%
+#This model is 96% accurate in predicting Specificity(false positive).
+```
+# k-Fold Cross Validation 
+k-fold cv is used to guage how well a model performs. One way to reduce both the bias and variance is by using k-fold cross validation.
+It has a train()function. We are using the train() function with 10-fold cross validation to pick a decision tree.
+ 
+```{r}
+library(caret)
+set.seed(123)
+folds<-createFolds(y=Bank_train$y..category, k=10, list=TRUE, returnTrain=FALSE)
+
+#Checking the number of observations in each fold
+sapply(folds, length)
+
+cvCtrl <- trainControl(method="cv", number=10)
+set.seed(123)
+Bank.caret.10folds<-train(y..category ~., data=Bank_train, method="rpart", metric="Accuracy", tuneLength=10, trControl=cvCtrl) #Here I am using "Accuracy" as the measure to choose among multiple possible models.
+#tuneLength decides how many models to test. Her I am specifying 10 models.
+Bank.caret.10folds
+#It gives a tree with Accuracy = 89.51% and complexity parameter = 0.003038194.
+#Since the chosen cp=0.003038194, we will use this to prune our decision tree.
+
+Bank.rpart.pruned<-prune(Bank.rpart, cp=0.003038194)
+rpart.plot(Bank.rpart.pruned, cex = 0.6)
+
+#Now let's apply our pruned tree to predict the test (hold out) set.
+
+actual <- Bank_test$y..category 
+Bank_predicted.10fold <- predict(Bank.rpart.pruned, newdata=Bank_test, type="class") 
+Bank_results.matrix.10fold <- confusionMatrix(Bank_predicted.10fold, actual, positive="yes") 
+print(Bank_results.matrix.10fold) 
+# Accuracy = 90.41%
+# Sensitivity = 43.06%
+# Specificity = 95.73%
+
+#Compare it to the Accuracy of the previous model
+print(Bank_results.matrix) 
+
+# 1. Accuracy of the Model after pruning and tesing with Test dataset - 90.41% ( Which is almost the same as before pruning)
+```
+# Bootstrapping (Resampling Technique) to choose the CP value to prune the tree
+By doing Resampling we are guaging model performance. Here we resample a new data to test. Boostrapping model creates a decision tree to check error rate and repeats until it averages error rate out.
+```{r}
+cvCtrl <- trainControl(method="boot", number=10) #10 resampling iterations as before.
+set.seed(123)
+Bank.caret.bootstrap<-train(y..category ~., data=Bank_train, method="rpart", metric="Accuracy", tuneLength=10, trControl=cvCtrl)
+Bank.caret.bootstrap
+# Accuracy = 89.26%
+#Since the chosen cp=0.01041667, we will use this to prune our decision tree.
+
+Bank.rpart.pruned.boot<-prune(Bank.rpart, cp=0.01041667)
+rpart.plot(Bank.rpart.pruned.boot,cex = 0.5)
+
+#Now let's apply our pruned tree to predict the test (hold out) set.
+#Compare
+
+actual <- Bank_test$y..category 
+Bank_predicted.boot <- predict(Bank.rpart.pruned.boot, newdata=Bank_test, type="class") 
+Bank_results.matrix.boot <- confusionMatrix(Bank_predicted.boot, actual, positive="yes") 
+print(Bank_results.matrix.boot) 
+# Accuracy = 90.41%
+# Sensitivity = 40.87%
+# Specificity = 95.98%
+
+print(Bank_results.matrix.10fold) #compare to the original tree. What do you see?
+
+# Accuracy of the Model after pruning and tesing with Test dataset - 90.41%, Not a significant increase in the Accuracy.
+```
+# Bagging Model
+Bagging reduces variation and improves the performance but we loose Interpretaion because of 500 trees. We have total 11 predictors and 1 predictor (y...category) is my target. So we are using 10 predictors.
+
+ 1. OOB estimate of  error rate = 10.52%
+ 2. Duration, day and Month Variables being the most important in explaining the output
+ 3. Accuracy of the Model -  90.56% (Not a huge difference compare to the previous model - After pruning with CP Value using Bootstrapping)
+
+```{r}
+library(randomForest)
+set.seed(123) 
+
+#Set mtry to equal 10 predictors. This means 10 predictors should be considered at each split. This is what makes it "bagging." 
+
+Bank.bag <- randomForest(Bank_train$y..category ~., data=Bank_train, mtry=10, na.action=na.omit, importance=TRUE)
+
+print(Bank.bag)  
+
+importance(Bank.bag) #shows the importance of each variable. Variable importance is computed using the mean decrease in the Gini index.
+
+#day..number  = 111.436600
+#month..category  = 92.136028
+#duration..number = 271.872802
+
+varImpPlot(Bank.bag)
+
+# all the variables on the top are important, duration..number followed by month..category and poutcome..category.
+# Gini coefficient says duration..number followed by day..number and month..catrgory is more imortant.
+
+
+actual <- Bank_test$y..category
+Bank_predicted.bag <- predict(Bank.bag, newdata=Bank_test, type="class") 
+Bank_results.matrix.bag <- confusionMatrix(Bank_predicted.bag, actual, positive="yes") 
+print(Bank_results.matrix.bag)
+
+# Accuracy = 90.56%
+# Sensitivity = 40.87%
+# Specificity = 95.98%
+
+
+print(Bank_results.matrix.boot) #compare with best model previously
+```
+
+# Random Forest
+Here the OBB error rate decreases. Instead of each spilt to use all predictors we assign 3 predictors.
+1. OOB estimate of  error rate: 10.14% (reduced compared to bagging model).
+2. Again, Duration, day and Month Variables being treated as the most important in explaining the output.
+3. Accuracy of the Model -  91% (Not a huge difference compared to Bagging model) but Sentitivity has improved 45.25% when compared to previous model which was 40.87%, this model can also be used to identify customers who are subscribing to term deposit.
+```{r}
+library(randomForest)
+set.seed(123)
+Bank.RForest <- randomForest(Bank_train$y..category ~.,data=Bank_train, mtry=3, ntree=500,na.action = na.omit, importance=TRUE) 
+print(Bank.RForest) 
+importance(Bank.RForest) #shows the importance of each variable
+varImpPlot(Bank.RForest) #plots the importance of each variable
+
+actual <- Bank_test$y..category #this is just a repeat of the above
+Bank.RForest_predict<-predict(Bank.RForest, Bank_test ,type="response") 
+Bank.RForest_results.matrix <- confusionMatrix(Bank.RForest_predict, actual,positive="yes") #the model vs the actual holdout data.
+print(Bank.RForest_results.matrix)
+
+# Accuracy = 91%
+# Sensitivity = 45.25% which shows how accurate a model is in identifying customers who have subscribed to term deposit. 
+# Specificity = 96.14%
+
+print(Bank_results.matrix.bag)
+```
+# Boosting (Misclassified cases)
+1. error rate: 11.3%
+2. Overally the Accuracy has not increased significantly in any models.
+```{r}
+library(adabag) #a popular boosting algorithm
+set.seed(123)
+Bank_adaboost <- boosting.cv(y..category ~.,data=Bank_train, boos=TRUE, v=10)
+Bank_adaboost$confusion #confusion matrix for boosting
+Bank_adaboost$error #error rate for boosting (OOB)
+1-Bank_adaboost$error #accuracy rate for boosting (OOB)
+# Accuracy = 88.62%
+```
+# KNN Model (k- Nearest Neighbour)
+In knn model the data should be normalized or scaled.In kth nearest neighbor classification we need to find a value for k. We should choose it to minimize predicition error. 
+1. The final value used for the model was k = 17 ( Accuracy = 88.4%)
+2. Applying the model with test dataset, Accuracry has increased to 91.08%
+```{r}
+set.seed(123)
+
+Bank_training_complete<- Bank_train[complete.cases(Bank_train),]
+Bank_testing_complete<-Bank_test[complete.cases(Bank_test),]
+
+cvCtrl<-trainControl(method="repeatedcv", number=10, repeats=3)
+kNNFit <- train(y..category ~., data=Bank_training_complete, method="knn", trControl=cvCtrl, preProcess = c("center", "scale"), tuneLength=10)#note that kNN requires the data to be centered & scaled (i.e. normalized)
+
+print(kNNFit)
+#Accuracy = 88.31%
+# based on accuracy largest value k=17
+
+plot(kNNFit)# We are then plot the accuracy rate for each value of k, which helps us to see in what region there might be a minimal error rate.
+
+kNNPredict<-predict(kNNFit, newdata=Bank_testing_complete)
+actual <- Bank_testing_complete$y..category 
+Bank_results.matrix.kNN <- confusionMatrix(kNNPredict, actual, positive="yes") 
+print(Bank_results.matrix.kNN) 
+# Accuracy = 91.08%
+# Sensitivity = 19.70%
+# Specificity = 99.09%
+```
+# Evaluating Metric Performance using ROC (receiver operating characteristics) 
+1.  The curve displays the true positive rate (sensitivity) against the false positive rate (1-specificity). The closer the curve follows the left hand border and then the top left border of the ROC space, the more accurate the model.
+2.  The curve shows the model is not perfectly accurate.
+3. Overally the Accuracy has not increased significantly in any models.
+
+```{r}
+#Create a ROC curve
+library(ROCR)
+Bank.RForest_predict_prob<-predict(Bank.RForest, type="prob", Bank_test)# same as above for predict, but add "prob".
+Bank.pred = prediction(Bank.RForest_predict_prob[,2],Bank_test$y..category)# use[,2] to pick "yes" from the y..category
+Bank.RForest.perf = performance(Bank.pred,"tpr","fpr") #true pos and false pos
+```
+```{r}
+plot(Bank.RForest.perf ,main="ROC Curve for Random Forest",col=2,lwd=2)
+abline(a=0,b=1,lwd=2,lty=2,col="gray")
+```
+
+# Recommendations
+-1.The knn model helps to identify customer with more predilection towards subscribing to a term deposit.It has an accuracy of 91.08%, the highest among any models created.
+-2.The knn-model also has high specificity 99.1%, It can also be used to validate customers who are not interested in subscribing to a term deposit or those who have been falsely identified as subscribers to the term deposit. 
+-3.The Random forest model has high sensitivity of 45.25%, the highest among all the models, hence this model can also be used to identify customers who are subscribing to term deposit.
+-4.These predictions could help us to focus on specific group of customers such as those who are single, market investment strategies in different months such as depending on the term customer select, they can choose to have thier interest paid monthly, quarterly, half-yearly, annually, or at maturity.
+-5.Setting up a term deposit can be as easy as going online when you are busy during office hours, an online application may be the option for customer.
+-6. These models can also be used to predict the possibility of selling the term deposits to the new customer. 
+
+
+
+
+
+
